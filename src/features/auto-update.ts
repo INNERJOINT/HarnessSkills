@@ -39,6 +39,7 @@ function syncMarketplaceClone(verbose: boolean = false): { ok: boolean; message:
 
   const stdio = verbose ? 'inherit' : 'pipe';
   const execOpts = { encoding: 'utf-8' as const, stdio: stdio as any, timeout: 60000 };
+  const queryExecOpts = { encoding: 'utf-8' as const, stdio: 'pipe' as const, timeout: 60000 };
 
   try {
     execFileSync('git', ['-C', marketplacePath, 'fetch', '--all', '--prune'], execOpts);
@@ -46,23 +47,72 @@ function syncMarketplaceClone(verbose: boolean = false): { ok: boolean; message:
     return { ok: false, message: `Failed to fetch marketplace clone: ${err instanceof Error ? err.message : err}` };
   }
 
-  // Ensure we're on main (ignore errors for older clones on different branches)
-  try { execFileSync('git', ['-C', marketplacePath, 'checkout', 'main'], { ...execOpts, timeout: 15000 }); } catch { /* ignore checkout errors on older clones */ }
-
-  // Reset to upstream state -- the marketplace clone is a managed read-only
-  // checkout, so any local modifications (e.g. regenerated dist files) can be
-  // safely discarded.  This avoids the "dirty worktree" failure that
-  // `git pull --ff-only` would hit when untracked/modified files exist (#978).
   try {
-    execFileSync('git', ['-C', marketplacePath, 'reset', '--hard', 'origin/main'], execOpts);
+    execFileSync('git', ['-C', marketplacePath, 'checkout', 'main'], { ...execOpts, timeout: 15000 });
+  } catch {
+    // Fall through to explicit branch verification below.
+  }
+
+  let currentBranch = '';
+  try {
+    currentBranch = String(
+      execFileSync('git', ['-C', marketplacePath, 'rev-parse', '--abbrev-ref', 'HEAD'], queryExecOpts) ?? ''
+    ).trim();
   } catch (err) {
-    return { ok: false, message: `Failed to reset marketplace clone: ${err instanceof Error ? err.message : err}` };
+    return { ok: false, message: `Failed to inspect marketplace clone branch: ${err instanceof Error ? err.message : err}` };
+  }
+
+  if (currentBranch !== 'main') {
+    return {
+      ok: false,
+      message: `Skipped marketplace clone update: expected branch main but found ${currentBranch || 'unknown'}`,
+    };
+  }
+
+  let statusOutput = '';
+  try {
+    statusOutput = String(
+      execFileSync('git', ['-C', marketplacePath, 'status', '--porcelain', '--untracked-files=normal'], queryExecOpts) ?? ''
+    ).trim();
+  } catch (err) {
+    return { ok: false, message: `Failed to inspect marketplace clone status: ${err instanceof Error ? err.message : err}` };
+  }
+
+  if (statusOutput.length > 0) {
+    return {
+      ok: false,
+      message: 'Skipped marketplace clone update: repo has local modifications; commit, stash, or clean it first',
+    };
+  }
+
+  let aheadCount = 0;
+  let behindCount = 0;
+  try {
+    const revListOutput = String(
+      execFileSync('git', ['-C', marketplacePath, 'rev-list', '--left-right', '--count', 'HEAD...origin/main'], queryExecOpts) ?? ''
+    ).trim();
+    const [aheadRaw = '0', behindRaw = '0'] = revListOutput.split(/\s+/);
+    aheadCount = Number.parseInt(aheadRaw, 10) || 0;
+    behindCount = Number.parseInt(behindRaw, 10) || 0;
+  } catch (err) {
+    return { ok: false, message: `Failed to inspect marketplace clone divergence: ${err instanceof Error ? err.message : err}` };
+  }
+
+  if (aheadCount > 0) {
+    return {
+      ok: false,
+      message: 'Skipped marketplace clone update: repo has local commits on main; manual reconciliation required',
+    };
+  }
+
+  if (behindCount === 0) {
+    return { ok: true, message: 'Marketplace clone already up to date' };
   }
 
   try {
-    execFileSync('git', ['-C', marketplacePath, 'clean', '-fd'], execOpts);
-  } catch {
-    // clean is best-effort; untracked leftovers won't break anything
+    execFileSync('git', ['-C', marketplacePath, 'merge', '--ff-only', 'origin/main'], execOpts);
+  } catch (err) {
+    return { ok: false, message: `Failed to fast-forward marketplace clone: ${err instanceof Error ? err.message : err}` };
   }
 
   return { ok: true, message: 'Marketplace clone updated' };
