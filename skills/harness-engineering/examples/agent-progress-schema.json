@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Agent Progress Tracker",
+  "description": "Schema for tracking multi-session agent task progress, following Anthropic's Harness pattern",
+  "type": "object",
+  "required": ["project", "features", "last_session"],
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Project identifier"
+    },
+    "features": {
+      "type": "array",
+      "description": "List of features/tasks to implement",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "status"],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Unique feature identifier"
+          },
+          "name": {
+            "type": "string",
+            "description": "Feature name/description"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["not_started", "in_progress", "failing", "passing", "blocked"],
+            "description": "Current feature status"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "Priority level (1 = highest)"
+          },
+          "session": {
+            "type": ["integer", "null"],
+            "description": "Session number when last worked on"
+          },
+          "tests": {
+            "type": "array",
+            "description": "Associated test results",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "result": { 
+                  "type": "string",
+                  "enum": ["pass", "fail", "skip"]
+                },
+                "error": { "type": "string" }
+              }
+            }
+          },
+          "notes": {
+            "type": "string",
+            "description": "Additional context for the next session"
+          }
+        }
+      }
+    },
+    "last_session": {
+      "type": "integer",
+      "description": "Most recent session number"
+    },
+    "last_commit": {
+      "type": "string",
+      "description": "Git commit hash of last clean state"
+    },
+    "environment": {
+      "type": "object",
+      "description": "Environment setup details",
+      "properties": {
+        "init_script": {
+          "type": "string",
+          "description": "Path to initialization script"
+        },
+        "dev_server_command": {
+          "type": "string",
+          "description": "Command to start development server"
+        },
+        "test_command": {
+          "type": "string",
+          "description": "Command to run tests"
+        }
+      }
+    },
+    "session_log": {
+      "type": "array",
+      "description": "History of session activities",
+      "items": {
+        "type": "object",
+        "properties": {
+          "session": { "type": "integer" },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "features_completed": {
+            "type": "array",
+            "items": { "type": "integer" }
+          },
+          "features_attempted": {
+            "type": "array",
+            "items": { "type": "integer" }
+          },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "General project notes and context for future sessions"
+    }
+  }
+}

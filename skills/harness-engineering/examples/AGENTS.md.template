@@ -1,0 +1,110 @@
+# Agent Instructions
+
+> This file serves as the operating manual for AI agents working on this project.
+> It should be placed at the project root and updated whenever agents encounter new failure patterns.
+
+## Project Overview
+<!-- Describe the project's purpose, architecture, and key constraints -->
+
+[Project Name] is a [brief description]. It follows a [architecture style] architecture.
+
+## Build & Test Commands
+
+```bash
+# Install dependencies
+npm install
+
+# Build the project
+npm run build
+
+# Run all tests
+npm test
+
+# Run linter
+npm run lint
+
+# Run type checks
+npm run typecheck
+```
+
+## Architecture Rules
+
+### Dependency Direction
+- **Presentation Layer** → **Service Layer** → **Data Layer**
+- Never import from a higher layer into a lower layer
+- Shared utilities go in `src/shared/` or `src/utils/`
+
+### Module Structure
+```
+src/
+├── controllers/    # HTTP handlers, input validation
+├── services/       # Business logic
+├── data/           # Database access, external APIs
+├── shared/         # Shared types, constants, utilities
+└── tests/          # Test files mirror source structure
+```
+
+### Key Constraints
+1. All new features **must** have corresponding test files
+2. No direct database access outside `src/data/`
+3. Error handling must use the project's custom error classes
+4. All async operations must have proper error handling and timeouts
+5. Environment-specific configuration goes in `.env` files, never hardcoded
+
+## Coding Standards
+
+### Naming Conventions
+- Files: `kebab-case.ts`
+- Classes: `PascalCase`
+- Functions/Variables: `camelCase`
+- Constants: `UPPER_SNAKE_CASE`
+- Interfaces/Types: `PascalCase` (no `I` prefix)
+
+### Code Style
+- Use TypeScript strict mode
+- Prefer `const` over `let`, never use `var`
+- Use async/await over raw Promises
+- Maximum function length: 50 lines
+- Maximum file length: 300 lines
+
+## Common Pitfalls
+
+> **Update this section whenever an agent makes a mistake that could recur.**
+
+### Authentication
+- Never modify the auth middleware without security review
+- Token refresh logic is in `src/services/auth-service.ts` — don't duplicate it
+
+### Database
+- Always use transactions for multi-table operations
+- Use the query builder, not raw SQL
+- Don't forget to close database connections in test teardown
+
+### Testing
+- Run the **full** test suite before committing, not just changed files
+- Mock external services using the helpers in `src/tests/mocks/`
+- Integration tests require a running test database
+
+### Logging
+- Use the project's logger (`src/shared/logger.ts`), not `console.log`
+- Include correlation IDs in log messages for traceability
+- Log at appropriate levels: `error` > `warn` > `info` > `debug`
+
+## Error Recovery Procedures
+
+### If CI fails:
+1. Read the error message carefully
+2. Check if it's a known issue in this section
+3. Fix the root cause, don't just suppress the error
+4. Update this document if it's a new failure pattern
+
+### If tests timeout:
+1. Check for unresolved promises or missing `await`
+2. Verify test database is accessible
+3. Increase timeout only as a last resort, and document why
+
+## Version History
+
+| Date | Change | Reason |
+|------|--------|--------|
+| YYYY-MM-DD | Initial creation | Project setup |

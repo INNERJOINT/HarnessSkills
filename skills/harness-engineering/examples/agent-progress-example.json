@@ -1,0 +1,84 @@
+{
+  "project": "my-web-app",
+  "features": [
+    {
+      "id": 1,
+      "name": "User Authentication (Login/Register/Logout)",
+      "status": "passing",
+      "priority": 1,
+      "session": 2,
+      "tests": [
+        {"name": "login with valid credentials", "result": "pass"},
+        {"name": "login with invalid credentials", "result": "pass"},
+        {"name": "register new user", "result": "pass"},
+        {"name": "logout clears session", "result": "pass"}
+      ],
+      "notes": "Using JWT tokens with 1h expiry. Refresh token logic in auth-service.ts."
+    },
+    {
+      "id": 2,
+      "name": "Dashboard API Endpoints",
+      "status": "failing",
+      "priority": 1,
+      "session": 3,
+      "tests": [
+        {"name": "GET /api/dashboard returns user stats", "result": "pass"},
+        {"name": "GET /api/dashboard handles large datasets", "result": "fail", "error": "Timeout after 30s on datasets > 10k rows"},
+        {"name": "GET /api/dashboard unauthorized access", "result": "pass"}
+      ],
+      "notes": "Pagination needed for large datasets. Consider cursor-based pagination for better performance."
+    },
+    {
+      "id": 3,
+      "name": "Email Notification System",
+      "status": "in_progress",
+      "priority": 2,
+      "session": 3,
+      "tests": [
+        {"name": "send welcome email on register", "result": "pass"},
+        {"name": "send password reset email", "result": "skip"}
+      ],
+      "notes": "Using SendGrid API. Template system partially implemented."
+    },
+    {
+      "id": 4,
+      "name": "Admin Panel & User Management",
+      "status": "not_started",
+      "priority": 3,
+      "session": null,
+      "tests": [],
+      "notes": "Depends on features 1 and 2. Need RBAC implementation first."
+    }
+  ],
+  "last_session": 3,
+  "last_commit": "a1b2c3d4e5f6",
+  "environment": {
+    "init_script": "./scripts/init.sh",
+    "dev_server_command": "npm run dev",
+    "test_command": "npm test"
+  },
+  "session_log": [
+    {
+      "session": 1,
+      "timestamp": "2026-03-20T10:00:00Z",
+      "features_completed": [],
+      "features_attempted": [1],
+      "summary": "Set up project scaffolding. Started auth module. Basic login flow working but tests incomplete."
+    },
+    {
+      "session": 2,
+      "timestamp": "2026-03-21T14:00:00Z",
+      "features_completed": [1],
+      "features_attempted": [1, 2],
+      "summary": "Completed auth module with full test coverage. Started dashboard API basics."
+    },
+    {
+      "session": 3,
+      "timestamp": "2026-03-22T09:00:00Z",
+      "features_completed": [],
+      "features_attempted": [2, 3],
+      "summary": "Dashboard API largely working but has timeout issues with large datasets. Started email notifications. Codebase is in clean, compilable state."
+    }
+  ],
+  "notes": "Next session should focus on fixing dashboard pagination (feature 2) before moving to feature 3 completion. Feature 4 is blocked until 1 and 2 are fully passing."
+}
