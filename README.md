@@ -23,6 +23,8 @@ The core principles enforced by this skill are:
 
 - `skills/harness-engineering/SKILL.md`: The core executable prompt (English).
 - `skills/harness-engineering/SKILL_zh.md`: The core executable prompt (Chinese).
+- `skills/init-harness-env/SKILL.md`: Bootstrap skill to generate the "Golden Architecture" (`AGENTS.md` and state files) on new projects.
+- `skills/init-harness-env/SKILL_zh.md`: Bootstrap skill (Chinese).
 - `skills/harness-engineering/examples/AGENTS.md.template`: A template for configuring your project's guardrails.
 - `skills/harness-engineering/examples/agent-progress-schema.json`: JSON schema for the state persistence file.
 
