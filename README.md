@@ -5,11 +5,17 @@ This repository provides **Harness Engineering** skills for AI agents. Harness E
 ## Installation
 
 ### Claude Code (Recommended)
-Since this repository includes standard Claude Code plugin infrastructure, you can install it directly inside Claude Code:
+Since this repository includes standard Claude Code plugin infrastructure, you must first add it as a plugin marketplace, then install it:
 
 ```bash
-/plugin install https://github.com/INNERJOINT/HarnessSkills
+# 1. Add this repository as a marketplace
+/plugin marketplace add INNERJOINT/HarnessSkills
+
+# 2. Install the plugin from the new marketplace
+/plugin install harness-skills@HarnessSkills
 ```
+
+**Local Testing**: Or, if you have cloned the repository locally, just use: `/plugin install /Users/yukun/HarnessSkills`
 
 ### Other Environments (Gemini/OpenCode/npx)
 ```bash
