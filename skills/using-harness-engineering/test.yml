@@ -1,0 +1,358 @@
+stages:
+  - auto_create_mr
+  - aicr_comment
+  - check
+  - merge
+
+variables:
+  PROTECTED_BRANCH: "aicr-protect-branch-develop" # 这里写对应的AICR保护分支名称
+  MASTER_BRANCH: "develop" # 这里写对应的主分支名称
+  GITLAB_URL: "https://gitlab.gz.cvte.cn"  # 不变
+  GITLAB_API_URL: "${GITLAB_URL}/api/v4" # 不变
+  # 需要设置环境变量 GITLAB_TOKEN 用于API调用
+
+# 现有作业：新分支推送时自动创建MR到保护分支
+auto_create_mr_optimized:
+  stage: auto_create_mr
+  image: curlimages/curl:latest
+  script:
+    - |
+      # 检查是否是新分支
+      if [ "$CI_COMMIT_BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+        # 排除主分支 这里可以改成对应仓库的稳定主分支
+        if [[ "$CI_COMMIT_REF_NAME" != "$MASTER_BRANCH" ]]; then
+          echo "为分支 $CI_COMMIT_REF_NAME 创建 MR..."
+          
+          # 创建 MR（不解析响应，最快）
+          curl -s -X POST \
+            -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "source_branch": "'"$CI_COMMIT_REF_NAME"'",
+              "target_branch": "'"$PROTECTED_BRANCH"'",
+              "title": "【自动创建】'"$CI_COMMIT_REF_NAME"'分支的AICR专用分支",
+              "description": "\n\n**自动创建**\n- 分支: '"$CI_COMMIT_REF_NAME"'\n- 创建时间: '"$(date)"'\n- 流水线: '"$CI_PIPELINE_URL"'",
+              "remove_source_branch": false,
+              "labels": "AICR专用MR",
+              "assignee_id": '"$GITLAB_USER_ID"'
+            }' \
+            "$GITLAB_URL/api/v4/projects/$CI_PROJECT_ID/merge_requests" > /dev/null 2>&1
+          
+          echo "MR 创建请求已发送"
+        fi
+      fi
+  rules:
+    # 仅在以下条件同时满足时运行：
+    # 1. 触发类型是 push
+    # 2. 新分支创建
+    # 3. ⚠️如果需要分支限制，请加上判断  && $CI_COMMIT_REF_NAME =~ /^stable-.*$/
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BEFORE_SHA == "0000000000000000000000000000000000000000" '
+      when: always
+
+# 新增作业：检查源分支到AICR保护分支的MR并添加评论
+comment_aicr_data:
+  stage: aicr_comment
+  image: curlimages/curl:latest
+  script:
+    - |
+      echo "检查源分支到AICR保护分支的MR..."
+      echo "当前MR信息:"
+      echo "  MR ID: $CI_MERGE_REQUEST_IID"
+      echo "  源分支: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+      echo "  目标分支: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      
+      # 检查目标分支是否为保护分支
+      if [ "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" != "$MASTER_BRANCH" ]; then
+        echo "目标分支不是保护分支 $MASTER_BRANCH，跳过"
+        exit 0
+      fi
+      
+      # 检查源分支是否存在到保护分支的MR
+      echo "检查源分支 $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME 到保护分支 $PROTECTED_BRANCH 的MR..."
+      
+      # 查询源分支到保护分支的所有MR
+      MR_RESPONSE=$(curl -s \
+        -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests?source_branch=$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME&target_branch=$PROTECTED_BRANCH")
+      
+      # 检查响应是否包含MR
+      if echo "$MR_RESPONSE" | grep -q '"iid"'; then
+        echo "找到源分支到保护分支的MR"
+        
+        # 提取第一个MR的信息
+        # 获取第一个iid
+        MR_ID=$(echo "$MR_RESPONSE" | grep -o '"iid":[0-9]*' | awk 'NR==1' | cut -d: -f2)
+        
+        # 获取第一个title
+        MR_TITLE=$(echo "$MR_RESPONSE" | grep -o '"title":"[^"]*"' | awk 'NR==1' | cut -d'"' -f4)
+        
+        # 获取第一个state
+        MR_STATE=$(echo "$MR_RESPONSE" | grep -o '"state":"[^"]*"' | awk 'NR==1' | cut -d'"' -f4)
+        
+        # 获取最后一个web_url（如果需要第一个，将tail -1改为head -1）
+        MR_URL=$(echo "$MR_RESPONSE" | grep -o '"web_url":"[^"]*"' | awk 'END{print}' | cut -d'"' -f4)
+        
+        echo "提取的MR信息:"
+        echo "  MR ID: $MR_ID"
+        echo "  MR标题: $MR_TITLE"
+        echo "  MR状态: $MR_STATE"
+        echo "  MR链接: $MR_URL"
+        
+          # 1. 调用AICR接口获取检测数据
+        AICR_RESPONSE=$(curl --location --silent --fail \
+          "https://study-pictool.test.seewo.com/api/study/minder/v1/gitlab/open?projectId=$CI_PROJECT_ID&mrId=$MR_ID")
+        echo "AICR_RESPONSE: $AICR_RESPONSE"
+
+        echo "$AICR_RESPONSE" | grep -o '"data":"[^"]*"' | sed 's/"data":"\(.*\)"/\1/'
+        echo "$AICR_RESPONSE" | sed -n 's/.*"data":"\([^"]*\)".*/\1/p'
+        data_content=$(echo "$AICR_RESPONSE" | grep -o '"data":"[^"]*"' | sed 's/"data":"\(.*\)"/\1/')
+
+        echo "data_content: $data_content"
+
+        ESCAPED_INFO_COMMENT=$(echo "$data_content" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+        echo "ESCAPED_INFO_COMMENT: $ESCAPED_INFO_COMMENT"
+
+        # 准备评论内容
+        COMMENT="## 🔍 AICR保护分支MR关联检查\n\n"
+        COMMENT="${COMMENT}检测到源分支 **$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME** 到保护分支 **$PROTECTED_BRANCH** 存在MR：\n\n"
+        COMMENT="${COMMENT} **MR #$MR_ID**: [$MR_TITLE]($MR_URL) - 状态: $MR_STATE\n\n"
+        COMMENT="${COMMENT}---\n"
+        COMMENT="${COMMENT}*此评论由自动化流水线添加，触发条件：MR提交到保护分支 $PROTECTED_BRANCH*"
+        ESCAPED_INFO_COMMENT2=$(echo "$COMMENT" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+
+        INFO_RESPONSE2=$(curl -s -X POST \
+          -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"body\": \"$ESCAPED_INFO_COMMENT2\"
+          }" \
+          "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes")
+        
+        if echo "$INFO_RESPONSE2" | grep -q '"id"'; then
+          echo "✅ 成功在MR #$CI_MERGE_REQUEST_IID 中添加信息性评论"
+        fi
+        
+        INFO_RESPONSE=$(curl -s -X POST \
+          -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"body\": \"$ESCAPED_INFO_COMMENT\"
+          }" \
+          "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes")
+        
+        if echo "$INFO_RESPONSE" | grep -q '"id"'; then
+          echo "✅ 成功在MR #$CI_MERGE_REQUEST_IID 中添加信息性评论"
+        fi
+        
+      else
+        echo "未找到源分支 $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME 到保护分支 $PROTECTED_BRANCH 的MR"
+        
+        # 如果没有找到MR，也可以添加一条信息性评论
+        INFO_COMMENT="## 🔍 AICR保护分支MR关联检查\n\n"
+        INFO_COMMENT="${INFO_COMMENT}源分支 **$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME** 到保护分支 **$PROTECTED_BRANCH** 未找到相关MR。\n\n"
+        INFO_COMMENT="${INFO_COMMENT}---\n"
+        INFO_COMMENT="${INFO_COMMENT}*此评论由自动化流水线添加*"
+        
+        # 转义JSON特殊字符
+        ESCAPED_INFO_COMMENT=$(echo "$INFO_COMMENT" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+        
+        INFO_RESPONSE=$(curl -s -X POST \
+          -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"body\": \"$ESCAPED_INFO_COMMENT\"
+          }" \
+          "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes")
+        
+        if echo "$INFO_RESPONSE" | grep -q '"id"'; then
+          echo "✅ 成功在MR #$CI_MERGE_REQUEST_IID 中添加信息性评论"
+        fi
+      fi
+  rules:
+    # 仅在以下条件同时满足时运行：
+    # 1. 触发类型是 merge_request_event
+    # 2. 目标分支是保护分支
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == $MASTER_BRANCH'
+      when: always
+
+# 1. 检查是否有分支合并到master
+check_merge:
+  stage: check
+  image: curlimages/curl:latest
+  script:
+    - |
+      if [[ "$CI_COMMIT_REF_NAME" != "$MASTER_BRANCH" ]]; then
+          echo "非master分支触发，跳过"
+          exit 0
+      fi
+      echo "检查最近合并到master的合并请求..."
+      
+      # 获取最近合并到master的合并请求列表
+      MERGED_MR_RESPONSE=$(curl -s \
+        -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests?state=merged&target_branch=$MASTER_BRANCH&order_by=updated_at&per_page=1")
+      
+      # 提取最新的合并请求ID
+      LATEST_MR_ID=$(echo "$MERGED_MR_RESPONSE" | grep -o '"iid":[0-9]*' | awk 'NR==1' | cut -d: -f2)
+      
+      if [ -z "$LATEST_MR_ID" ]; then
+        echo "没有找到最近合并的MR"
+        exit 0
+      fi
+      
+      echo "找到最近合并的MR ID: $LATEST_MR_ID"
+      
+      # 获取该合并请求的详细信息
+      MR_DETAIL_RESPONSE=$(curl -s \
+        -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests/$LATEST_MR_ID")
+      
+      # 提取源分支名称
+      SOURCE_BRANCH=$(echo "$MR_DETAIL_RESPONSE" | grep -o '"source_branch":"[^"]*"' | awk 'NR==1' | cut -d'"' -f4)
+      
+      # 提取合并时间
+      MERGED_AT=$(echo "$MR_DETAIL_RESPONSE" | grep -o '"merged_at":"[^"]*"' | awk 'NR==1' | cut -d'"' -f4)
+      
+      if [ -z "$SOURCE_BRANCH" ]; then
+        echo "无法提取源分支名称"
+        exit 0
+      fi
+      
+      echo "检测到分支 $SOURCE_BRANCH 已合并到 $MASTER_BRANCH (合并时间: $MERGED_AT)"
+      echo "SOURCE_BRANCH=$SOURCE_BRANCH"
+      echo "MR_ID=$LATEST_MR_ID"
+      
+      if [ -z "$SOURCE_BRANCH" ]; then
+        echo "没有检测到新的合并，跳过"
+        exit 0
+      fi
+      
+      echo "开始将 $MASTER_BRANCH 合并到 $PROTECTED_BRANCH"
+      echo "触发合并的源分支: $SOURCE_BRANCH"
+      
+      # 创建合并请求
+      echo "创建从 $MASTER_BRANCH 到 $PROTECTED_BRANCH 的合并请求"
+      MERGE_REQUEST_RESPONSE=$(curl --silent --request POST \
+        --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        --header "Content-Type: application/json" \
+        --data "{
+          \"id\": $CI_PROJECT_ID,
+          \"source_branch\": \"$MASTER_BRANCH\",
+          \"target_branch\": \"$PROTECTED_BRANCH\",
+          \"title\": \"[自动合并] 合并 $MASTER_BRANCH 分支代码到 $PROTECTED_BRANCH 分支\",
+          \"description\": \"自动合并请求\\n源分支: $MASTER_BRANCH \\n目标分支: $PROTECTED_BRANCH\\n触发原因: $SOURCE_BRANCH (MR #$MR_ID) 已合并到$MASTER_BRANCH\\n合并时间: $MERGED_AT\\n流水线: $CI_PIPELINE_URL\",
+          \"remove_source_branch\": false,
+          \"squash\": false,
+          \"labels\": \"AICR专用MR,自动合并\"
+        }" \
+        "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests")
+      
+      if echo "$MERGE_REQUEST_RESPONSE" | grep -q '"iid"'; then
+        echo "成功创建合并请求"
+      else
+        echo "创建合并请求失败，MERGE_REQUEST_RESPONSE：$MERGE_REQUEST_RESPONSE"
+        exit 0
+      fi
+
+      # 关闭源分支到aicr分支的mr
+      echo "查找从 $SOURCE_BRANCH 到 $PROTECTED_BRANCH 的合并请求"
+       # 查询所有打开状态的MR
+       MR_LIST_RESPONSE=$(curl --silent \
+         --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+         "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests?state=opened&source_branch=$SOURCE_BRANCH&target_branch=$PROTECTED_BRANCH"
+       )
+
+      if [ "$MR_LIST_RESPONSE" = "[]" ]; then
+        echo "获取open的MR失败，MR_LIST_RESPONSE：$MR_LIST_RESPONSE"
+        exit 0
+      else
+        echo "获取open的MR成功"
+      fi
+
+       MR_IDS=$(echo "$MR_LIST_RESPONSE" | grep -o '"iid"[[:space:]]*:[[:space:]]*[0-9]*' | sed -E 's/"iid"[[:space:]]*:[[:space:]]*//g')
+
+       if [ -z "$MR_IDS" ]; then
+         echo "没有找到相关的合并请求"
+         exit 0
+       fi
+
+       echo "找到合并请求: $MR_IDS"
+
+       # 关闭每个MR
+       for MR_ID in $MR_IDS; do
+         echo "关闭合并请求 #$MR_ID"
+         
+         CLOSE_RESPONSE=$(curl --silent --request PUT \
+           --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+           --header "Content-Type: application/json" \
+           --data "{
+             \"state_event\": \"close\",
+             \"description\": \"此MR已关闭，因为源分支 $SOURCE_BRANCH 已合并到$MASTER_BRANCH，并自动创建了从$MASTER_BRANCH到$PROTECTED_BRANCH的新MR。\\n关闭时间: $(date)\\n关闭流水线: $CI_PIPELINE_URL\"
+           }" \
+           "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests/$MR_ID")
+         
+         if echo "$CLOSE_RESPONSE" | grep -q '"state":"closed"'; then
+           echo "已成功关闭合并请求 #$MR_ID"
+         else
+           echo "关闭合并请求 #$MR_ID 失败，响应: $CLOSE_RESPONSE"
+         fi
+       done
+      
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == $MASTER_BRANCH && $CI_PIPELINE_SOURCE == "push"'
+      when: on_success
+
+auto_merge_to_protected:
+  stage: merge
+  image: bitnami/git:latest
+  dependencies:
+    - check_merge
+  script:
+    - |
+      if [[ "$CI_COMMIT_REF_NAME" != "$MASTER_BRANCH" ]]; then
+          echo "非master分支触发，跳过"
+          exit 0
+      fi
+      # 获取最近合并到master的合并请求列表
+      MERGED_MR_RESPONSE=$(curl -s \
+        -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests?state=opened&target_branch=$PROTECTED_BRANCH&source_branch=$MASTER_BRANCH&order_by=updated_at&per_page=1")
+      
+      # 提取最新的合并请求ID
+      LATEST_MR_ID=$(echo "$MERGED_MR_RESPONSE" | grep -o '"iid":[0-9]*' | awk 'NR==1' | cut -d: -f2)
+      
+      if [ -z "$LATEST_MR_ID" ]; then
+        echo "没有找到最近合并的MR"
+        exit 0
+      fi
+      
+      echo "找到最近合并的MR ID: $LATEST_MR_ID"
+
+      if [ ! -z "$LATEST_MR_ID" ]; then
+        echo "已创建合并请求 #$LATEST_MR_ID"
+        
+        # 自动接受合并请求
+        echo "设置自动合并..."
+        MERGE_RESPONSE=$(curl --silent --request PUT \
+          --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+          --header "Content-Type: application/json" \
+          --data "{
+            \"auto_merge\": true
+          }" \
+          "$GITLAB_API_URL/projects/$CI_PROJECT_ID/merge_requests/$LATEST_MR_ID/merge")
+
+        if echo "$MERGE_RESPONSE" | grep -q '"state":"merged"'; then
+          echo "合并请求 #$LATEST_MR_ID 已成功合并"
+
+        elif echo "$MERGE_RESPONSE" | grep -q '"merge_when_pipeline_succeeds":true'; then
+          echo "已设置自动合并，等待流水线成功"
+        else
+          echo "设置自动合并失败，响应: $MERGE_RESPONSE"
+        fi
+      else
+        echo "创建合并请求失败，响应: $MERGE_REQUEST_RESPONSE"
+        exit 1
+      fi
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == $MASTER_BRANCH && $CI_PIPELINE_SOURCE == "push"'
+      when: on_success

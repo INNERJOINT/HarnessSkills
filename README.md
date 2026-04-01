@@ -4,6 +4,16 @@ This repository provides **Harness Engineering** skills for AI agents. Harness E
 
 ## Installation
 
+### Clone with Submodules
+
+```bash
+git clone --recurse-submodules https://github.com/INNERJOINT/HarnessSkills
+cd HarnessSkills
+
+# If you already cloned without submodules, initialize them:
+git submodule update --init --recursive
+```
+
 ### Claude Code (Recommended)
 Since this repository includes standard Claude Code plugin infrastructure, you must first add it as a plugin marketplace, then install it:
 

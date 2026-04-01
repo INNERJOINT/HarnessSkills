@@ -1,0 +1,12 @@
+[submodule "refs/modules/everything-claude-code"]
+	path = refs/modules/everything-claude-code
+	url = https://github.com/INNERJOINT/everything-claude-code
+[submodule "refs/modules/oh-my-claudecode"]
+	path = refs/modules/oh-my-claudecode
+	url = https://github.com/INNERJOINT/oh-my-claudecode
+[submodule "refs/modules/superpowers"]
+	path = refs/modules/superpowers
+	url = https://github.com/INNERJOINT/superpowers
+[submodule "refs/modules/claude-code"]
+	path = refs/modules/claude-code
+	url = git@github.com:INNERJOINT/claude-code.git

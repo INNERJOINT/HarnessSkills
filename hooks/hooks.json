@@ -6,7 +6,55 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/session-start.mjs\"",
+            "async": false
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/prompt-handler.mjs\"",
+            "async": false
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/pre-tool-enforcer.mjs\"",
+            "async": false
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/session-stop.mjs\"",
+            "async": false
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hooks/session-stop.mjs\"",
             "async": false
           }
         ]
