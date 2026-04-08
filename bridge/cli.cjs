@@ -6430,10 +6430,11 @@ function writeModeState(mode, state, directory, sessionId) {
       ensureOmcDir("state", baseDir);
     }
     const filePath = resolveFile(mode, directory, sessionId);
-    const envelope = { ...state, _meta: { written_at: (/* @__PURE__ */ new Date()).toISOString(), mode } };
-    const tmpPath = filePath + ".tmp";
-    (0, import_fs17.writeFileSync)(tmpPath, JSON.stringify(envelope, null, 2), { mode: 384 });
-    (0, import_fs17.renameSync)(tmpPath, filePath);
+    const envelope = {
+      ...state,
+      _meta: { written_at: (/* @__PURE__ */ new Date()).toISOString(), mode, ...sessionId ? { sessionId } : {} }
+    };
+    atomicWriteJsonSync(filePath, envelope);
     return true;
   } catch {
     return false;
@@ -6502,6 +6503,7 @@ var init_mode_state_io = __esm({
     import_fs17 = require("fs");
     import_path22 = require("path");
     init_worktree_paths();
+    init_atomic_write();
   }
 });
 
@@ -6515,21 +6517,24 @@ var init_mode_names = __esm({
       TEAM: "team",
       RALPH: "ralph",
       ULTRAWORK: "ultrawork",
-      ULTRAQA: "ultraqa"
+      ULTRAQA: "ultraqa",
+      RALPLAN: "ralplan"
     };
     ALL_MODE_NAMES = [
       MODE_NAMES.AUTOPILOT,
       MODE_NAMES.TEAM,
       MODE_NAMES.RALPH,
       MODE_NAMES.ULTRAWORK,
-      MODE_NAMES.ULTRAQA
+      MODE_NAMES.ULTRAQA,
+      MODE_NAMES.RALPLAN
     ];
     MODE_STATE_FILE_MAP = {
       [MODE_NAMES.AUTOPILOT]: "autopilot-state.json",
       [MODE_NAMES.TEAM]: "team-state.json",
       [MODE_NAMES.RALPH]: "ralph-state.json",
       [MODE_NAMES.ULTRAWORK]: "ultrawork-state.json",
-      [MODE_NAMES.ULTRAQA]: "ultraqa-state.json"
+      [MODE_NAMES.ULTRAQA]: "ultraqa-state.json",
+      [MODE_NAMES.RALPLAN]: "ralplan-state.json"
     };
     SESSION_END_MODE_STATE_FILES = [
       { file: MODE_STATE_FILE_MAP[MODE_NAMES.AUTOPILOT], mode: MODE_NAMES.AUTOPILOT },
@@ -6537,12 +6542,14 @@ var init_mode_names = __esm({
       { file: MODE_STATE_FILE_MAP[MODE_NAMES.RALPH], mode: MODE_NAMES.RALPH },
       { file: MODE_STATE_FILE_MAP[MODE_NAMES.ULTRAWORK], mode: MODE_NAMES.ULTRAWORK },
       { file: MODE_STATE_FILE_MAP[MODE_NAMES.ULTRAQA], mode: MODE_NAMES.ULTRAQA },
+      { file: MODE_STATE_FILE_MAP[MODE_NAMES.RALPLAN], mode: MODE_NAMES.RALPLAN },
       { file: "skill-active-state.json", mode: "skill-active" }
     ];
     SESSION_METRICS_MODE_FILES = [
       { file: MODE_STATE_FILE_MAP[MODE_NAMES.AUTOPILOT], mode: MODE_NAMES.AUTOPILOT },
       { file: MODE_STATE_FILE_MAP[MODE_NAMES.RALPH], mode: MODE_NAMES.RALPH },
-      { file: MODE_STATE_FILE_MAP[MODE_NAMES.ULTRAWORK], mode: MODE_NAMES.ULTRAWORK }
+      { file: MODE_STATE_FILE_MAP[MODE_NAMES.ULTRAWORK], mode: MODE_NAMES.ULTRAWORK },
+      { file: MODE_STATE_FILE_MAP[MODE_NAMES.RALPLAN], mode: MODE_NAMES.RALPLAN }
     ];
   }
 });
@@ -8480,12 +8487,13 @@ ${END_MARKER}
   const hasResidualStartMarker = markerStartRegex.test(strippedExistingContent);
   const hasResidualEndMarker = markerEndRegex.test(strippedExistingContent);
   if (hasResidualStartMarker || hasResidualEndMarker) {
+    const recoveredContent = strippedExistingContent.replace(markerStartRegex, "").replace(markerEndRegex, "").trim();
     return `${START_MARKER}
 ${versionMarker}${cleanOmcContent}
 ${END_MARKER}
 
 <!-- User customizations (recovered from corrupted markers) -->
-${existingContent}`;
+${recoveredContent}`;
   }
   const preservedUserContent = trimClaudeUserContent(
     stripGeneratedUserCustomizationHeaders(strippedExistingContent)
@@ -12309,8 +12317,8 @@ var init_types2 = __esm({
 });
 
 // src/hud/background-cleanup.ts
-async function cleanupStaleBackgroundTasks(thresholdMs = STALE_TASK_THRESHOLD_MS) {
-  const state = readHudState();
+async function cleanupStaleBackgroundTasks(thresholdMs = STALE_TASK_THRESHOLD_MS, directory) {
+  const state = readHudState(directory);
   if (!state || !state.backgroundTasks) {
     return 0;
   }
@@ -12325,12 +12333,12 @@ async function cleanupStaleBackgroundTasks(thresholdMs = STALE_TASK_THRESHOLD_MS
   }
   const removedCount = originalCount - state.backgroundTasks.length;
   if (removedCount > 0) {
-    writeHudState(state);
+    writeHudState(state, directory);
   }
   return removedCount;
 }
-async function detectOrphanedTasks() {
-  const state = readHudState();
+async function detectOrphanedTasks(directory) {
+  const state = readHudState(directory);
   if (!state || !state.backgroundTasks) {
     return [];
   }
@@ -12346,12 +12354,12 @@ async function detectOrphanedTasks() {
   }
   return orphaned;
 }
-async function markOrphanedTasksAsStale() {
-  const state = readHudState();
+async function markOrphanedTasksAsStale(directory) {
+  const state = readHudState(directory);
   if (!state || !state.backgroundTasks) {
     return 0;
   }
-  const orphaned = await detectOrphanedTasks();
+  const orphaned = await detectOrphanedTasks(directory);
   let marked = 0;
   for (const orphanedTask of orphaned) {
     const task = state.backgroundTasks.find((t) => t.id === orphanedTask.id);
@@ -12361,7 +12369,7 @@ async function markOrphanedTasksAsStale() {
     }
   }
   if (marked > 0) {
-    writeHudState(state);
+    writeHudState(state, directory);
   }
   return marked;
 }
@@ -12560,9 +12568,9 @@ function mergeWithDefaults(config2) {
     ...config2.maxWidth != null ? { maxWidth: config2.maxWidth } : {}
   };
 }
-async function initializeHUDState() {
-  const removedStale = await cleanupStaleBackgroundTasks();
-  const markedOrphaned = await markOrphanedTasksAsStale();
+async function initializeHUDState(directory) {
+  const removedStale = await cleanupStaleBackgroundTasks(void 0, directory);
+  const markedOrphaned = await markOrphanedTasksAsStale(directory);
   if (removedStale > 0 || markedOrphaned > 0) {
     console.error(
       `HUD cleanup: removed ${removedStale} stale tasks, marked ${markedOrphaned} orphaned tasks`
@@ -16212,7 +16220,8 @@ function detectPipelineSignal(sessionId, signal) {
     (0, import_path57.join)(claudeDir, "sessions", sessionId, "messages.json"),
     (0, import_path57.join)(claudeDir, "transcripts", `${sessionId}.md`)
   ];
-  const pattern = new RegExp(signal, "i");
+  const escaped = signal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(escaped, "i");
   for (const transcriptPath of possiblePaths) {
     if ((0, import_fs48.existsSync)(transcriptPath)) {
       try {
@@ -17732,6 +17741,17 @@ function getReplyListenerPlatformConfig(config2) {
     slackChannelId: slackBotConfig?.channelId || config2["slack-bot"]?.channelId
   };
 }
+function parseSlackUserIds(envValue, configValue) {
+  if (envValue) {
+    const ids = envValue.split(",").map((id) => id.trim()).filter((id) => /^[UW][A-Z0-9]{8,11}$/.test(id));
+    if (ids.length > 0) return ids;
+  }
+  if (Array.isArray(configValue)) {
+    const ids = configValue.filter((id) => typeof id === "string" && /^[UW][A-Z0-9]{8,11}$/.test(id));
+    if (ids.length > 0) return ids;
+  }
+  return [];
+}
 function parseDiscordUserIds(envValue, configValue) {
   if (envValue) {
     const ids = envValue.split(",").map((id) => id.trim()).filter((id) => /^\d{17,20}$/.test(id));
@@ -17777,13 +17797,18 @@ function getReplyConfig() {
       "[notifications] Discord reply listening disabled: authorizedDiscordUserIds is empty. Set OMC_REPLY_DISCORD_USER_IDS or add to .omc-config.json notifications.reply.authorizedDiscordUserIds"
     );
   }
+  const authorizedSlackUserIds = parseSlackUserIds(
+    process.env.OMC_REPLY_SLACK_USER_IDS,
+    replyRaw?.authorizedSlackUserIds
+  );
   return {
     enabled: true,
     pollIntervalMs: parseIntSafe(process.env.OMC_REPLY_POLL_INTERVAL_MS) ?? replyRaw?.pollIntervalMs ?? 3e3,
     maxMessageLength: replyRaw?.maxMessageLength ?? 500,
     rateLimitPerMinute: parseIntSafe(process.env.OMC_REPLY_RATE_LIMIT) ?? replyRaw?.rateLimitPerMinute ?? 10,
     includePrefix: process.env.OMC_REPLY_INCLUDE_PREFIX !== "false" && replyRaw?.includePrefix !== false,
-    authorizedDiscordUserIds
+    authorizedDiscordUserIds,
+    authorizedSlackUserIds
   };
 }
 function detectLegacyOpenClawConfig() {
@@ -18770,24 +18795,27 @@ async function sendCustomWebhook(integration, payload) {
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config2.timeout);
-    const response = await fetch(url, {
-      method: config2.method,
-      headers,
-      body: config2.method !== "GET" ? body : void 0,
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (!response.ok) {
+    try {
+      const response = await fetch(url, {
+        method: config2.method,
+        headers,
+        body: config2.method !== "GET" ? body : void 0,
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        return {
+          platform: "webhook",
+          success: false,
+          error: `HTTP ${response.status}: ${response.statusText}`
+        };
+      }
       return {
         platform: "webhook",
-        success: false,
-        error: `HTTP ${response.status}: ${response.statusText}`
+        success: true
       };
+    } finally {
+      clearTimeout(timeout);
     }
-    return {
-      platform: "webhook",
-      success: true
-    };
   } catch (error2) {
     return {
       platform: "webhook",
@@ -21089,6 +21117,14 @@ async function pollLoop() {
             channelId: slackChannelId
           },
           async (event) => {
+            if (!config2.authorizedSlackUserIds || config2.authorizedSlackUserIds.length === 0) {
+              log("WARN: No authorized Slack user IDs configured, rejecting all messages (fail-closed)");
+              return;
+            }
+            if (!config2.authorizedSlackUserIds.includes(event.user)) {
+              log(`REJECTED Slack message from unauthorized user ${event.user}`);
+              return;
+            }
             if (!rateLimiter.canProceed()) {
               log(`WARN: Rate limit exceeded, dropping Slack message ${event.ts}`);
               state.errors++;
@@ -21099,12 +21135,6 @@ async function pollLoop() {
               const mapping = lookupByMessageId("slack-bot", event.thread_ts);
               if (mapping) {
                 targetPaneId = mapping.tmuxPaneId;
-              }
-            }
-            if (!targetPaneId) {
-              const mappings = loadAllMappings();
-              if (mappings.length > 0) {
-                targetPaneId = mappings[mappings.length - 1].tmuxPaneId;
               }
             }
             if (!targetPaneId) {
@@ -22662,23 +22692,35 @@ async function teamWriteWorkerInbox(teamName, workerName2, prompt, cwd2) {
   await writeAtomic(p, prompt);
 }
 async function teamCreateTask(teamName, task, cwd2) {
-  const cfg = await teamReadConfig(teamName, cwd2);
-  if (!cfg) throw new Error(`Team ${teamName} not found`);
-  const nextId = String(cfg.next_task_id ?? 1);
-  const created = {
-    ...task,
-    id: nextId,
-    status: task.status ?? "pending",
-    depends_on: task.depends_on ?? task.blocked_by ?? [],
-    version: 1,
-    created_at: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  const taskPath2 = absPath(cwd2, TeamPaths.tasks(teamName));
-  await (0, import_promises7.mkdir)(taskPath2, { recursive: true });
-  await writeAtomic((0, import_node_path5.join)(taskPath2, `task-${nextId}.json`), JSON.stringify(created, null, 2));
-  cfg.next_task_id = Number(nextId) + 1;
-  await writeAtomic(absPath(cwd2, TeamPaths.config(teamName)), JSON.stringify(cfg, null, 2));
-  return created;
+  const lockDir = (0, import_node_path5.join)(teamDir2(teamName, cwd2), ".lock-create-task");
+  const timeoutMs = 5e3;
+  const deadline = Date.now() + timeoutMs;
+  let delayMs = 20;
+  while (Date.now() < deadline) {
+    const result = await withLock(lockDir, async () => {
+      const cfg = await teamReadConfig(teamName, cwd2);
+      if (!cfg) throw new Error(`Team ${teamName} not found`);
+      const nextId = String(cfg.next_task_id ?? 1);
+      const created = {
+        ...task,
+        id: nextId,
+        status: task.status ?? "pending",
+        depends_on: task.depends_on ?? task.blocked_by ?? [],
+        version: 1,
+        created_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      const taskPath2 = absPath(cwd2, TeamPaths.tasks(teamName));
+      await (0, import_promises7.mkdir)(taskPath2, { recursive: true });
+      await writeAtomic((0, import_node_path5.join)(taskPath2, `task-${nextId}.json`), JSON.stringify(created, null, 2));
+      cfg.next_task_id = Number(nextId) + 1;
+      await writeAtomic(absPath(cwd2, TeamPaths.config(teamName)), JSON.stringify(cfg, null, 2));
+      return created;
+    });
+    if (result.ok) return result.value;
+    await new Promise((resolve17) => setTimeout(resolve17, delayMs));
+    delayMs = Math.min(delayMs * 2, 200);
+  }
+  throw new Error(`Failed to acquire task creation lock for team ${teamName} after ${timeoutMs}ms`);
 }
 async function teamReadTask(teamName, taskId, cwd2) {
   for (const candidate of taskFileCandidates(teamName, taskId, cwd2)) {
@@ -24957,7 +24999,6 @@ async function markLeaderPaneMissingDeferred(params) {
   ).catch(logTransitionFailure);
 }
 async function queueInboxInstruction(params) {
-  await params.deps.writeWorkerInbox(params.teamName, params.workerName, params.inbox, params.cwd);
   const queued = await enqueueDispatchRequest(
     params.teamName,
     {
@@ -24979,6 +25020,17 @@ async function queueInboxInstruction(params) {
       reason: "duplicate_pending_dispatch_request",
       request_id: queued.request.request_id
     };
+  }
+  try {
+    await params.deps.writeWorkerInbox(params.teamName, params.workerName, params.inbox, params.cwd);
+  } catch (error2) {
+    await markImmediateDispatchFailure({
+      teamName: params.teamName,
+      request: queued.request,
+      reason: "inbox_write_failed",
+      cwd: params.cwd
+    });
+    throw error2;
   }
   const notifyOutcome = await Promise.resolve(params.notify(
     { workerName: params.workerName, workerIndex: params.workerIndex, paneId: params.paneId },
@@ -25195,9 +25247,12 @@ function removeWorkerWorktree(teamName, workerName2, repoRoot) {
     (0, import_node_child_process.execFileSync)("git", ["branch", "-D", branch], { cwd: repoRoot, stdio: "pipe" });
   } catch {
   }
-  const existing = readMetadata(repoRoot, teamName);
-  const updated = existing.filter((e) => e.workerName !== workerName2);
-  writeMetadata(repoRoot, teamName, updated);
+  const metaLockPath = getMetadataPath(repoRoot, teamName) + ".lock";
+  withFileLockSync(metaLockPath, () => {
+    const existing = readMetadata(repoRoot, teamName);
+    const updated = existing.filter((e) => e.workerName !== workerName2);
+    writeMetadata(repoRoot, teamName, updated);
+  });
 }
 function cleanupTeamWorktrees(teamName, repoRoot) {
   const entries = readMetadata(repoRoot, teamName);
@@ -25767,7 +25822,7 @@ async function requeueDeadWorkerTasks(teamName, deadWorkerNames, cwd2) {
     await writeFile9(sidecarPath, JSON.stringify(sidecar, null, 2), "utf-8");
     const taskPath2 = absPath(cwd2, TeamPaths.taskFile(sanitized, task.id));
     try {
-      const { readFileSync: readFileSync80, writeFileSync: writeFileSync35 } = await import("fs");
+      const { readFileSync: readFileSync80, writeFileSync: writeFileSync34 } = await import("fs");
       const { withFileLockSync: withFileLockSync2 } = await Promise.resolve().then(() => (init_file_lock(), file_lock_exports));
       withFileLockSync2(taskPath2 + ".lock", () => {
         const raw = readFileSync80(taskPath2, "utf-8");
@@ -25776,7 +25831,7 @@ async function requeueDeadWorkerTasks(teamName, deadWorkerNames, cwd2) {
           taskData.status = "pending";
           taskData.owner = void 0;
           taskData.claim = void 0;
-          writeFileSync35(taskPath2, JSON.stringify(taskData, null, 2), "utf-8");
+          writeFileSync34(taskPath2, JSON.stringify(taskData, null, 2), "utf-8");
           requeued.push(task.id);
         }
       });
@@ -26771,7 +26826,13 @@ async function spawnWorkerForTask(runtime, workerNameValue, taskIndex) {
     runtime.cwd
   ]);
   const paneId = splitResult.stdout.split("\n")[0]?.trim();
-  if (!paneId) return "";
+  if (!paneId) {
+    try {
+      await resetTaskToPending(root2, taskId, runtime.teamName, runtime.cwd);
+    } catch {
+    }
+    return "";
+  }
   const workerIndex = parseWorkerIndex(workerNameValue);
   const agentType = runtime.config.agentTypes[workerIndex % runtime.config.agentTypes.length] ?? runtime.config.agentTypes[0] ?? "claude";
   const usePromptMode = isPromptModeAgent(agentType);
@@ -37411,6 +37472,8 @@ var init_sanitize = __esm({
 // src/hud/index.ts
 var hud_exports = {};
 __export(hud_exports, {
+  _getSummaryProcessPid: () => _getSummaryProcessPid,
+  _resetSummarySpawnTimestamp: () => _resetSummarySpawnTimestamp,
   main: () => main2
 });
 function extractSessionIdFromPath(transcriptPath) {
@@ -37427,7 +37490,27 @@ function readSessionSummary(stateDir, sessionId) {
     return null;
   }
 }
+function _resetSummarySpawnTimestamp() {
+  lastSummarySpawnTimestamp = 0;
+  summaryProcessPid = null;
+}
+function _getSummaryProcessPid() {
+  return summaryProcessPid;
+}
 function spawnSessionSummaryScript(transcriptPath, stateDir, sessionId) {
+  if (summaryProcessPid !== null) {
+    try {
+      process.kill(summaryProcessPid, 0);
+      return;
+    } catch {
+      summaryProcessPid = null;
+    }
+  }
+  const now = Date.now();
+  if (now - lastSummarySpawnTimestamp < 12e4) {
+    return;
+  }
+  lastSummarySpawnTimestamp = now;
   const thisDir = (0, import_path119.dirname)((0, import_url16.fileURLToPath)(importMetaUrl));
   const scriptPath = (0, import_path119.join)(
     thisDir,
@@ -37452,8 +37535,10 @@ function spawnSessionSummaryScript(transcriptPath, stateDir, sessionId) {
         env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "session-summary" }
       }
     );
+    summaryProcessPid = child.pid ?? null;
     child.unref();
   } catch (error2) {
+    summaryProcessPid = null;
     if (process.env.OMC_DEBUG) {
       console.error(
         "[HUD] Failed to spawn session-summary:",
@@ -37472,9 +37557,6 @@ async function calculateSessionHealth(sessionStart, contextPercent) {
 }
 async function main2(watchMode = false, skipInit = false) {
   try {
-    if (!skipInit) {
-      await initializeHUDState();
-    }
     const previousStdinCache = readStdinCache();
     let stdin = await readStdin();
     if (stdin) {
@@ -37491,6 +37573,9 @@ async function main2(watchMode = false, skipInit = false) {
       return;
     }
     const cwd2 = resolveToWorktreeRoot(stdin.cwd || void 0);
+    if (!skipInit) {
+      await initializeHUDState(cwd2);
+    }
     const config2 = { ...readHudConfig() };
     if (config2.maxWidth === void 0) {
       const cols = process.stderr.columns || process.stdout.columns || parseInt(process.env.COLUMNS ?? "0", 10) || 0;
@@ -37671,7 +37756,7 @@ async function main2(watchMode = false, skipInit = false) {
     }
   }
 }
-var import_fs102, import_promises21, import_path119, import_os22, import_child_process44, import_url16;
+var import_fs102, import_promises21, import_path119, import_os22, import_child_process44, import_url16, lastSummarySpawnTimestamp, summaryProcessPid;
 var init_hud = __esm({
   "src/hud/index.ts"() {
     "use strict";
@@ -37695,6 +37780,8 @@ var init_hud = __esm({
     import_child_process44 = require("child_process");
     import_url16 = require("url");
     init_worktree_paths();
+    lastSummarySpawnTimestamp = 0;
+    summaryProcessPid = null;
     main2();
   }
 });
@@ -64270,9 +64357,10 @@ Error: ${sgLoadError}`
                 const varName = metaVar.replace(/^\$+/, "");
                 const captured = match.getMatch(varName);
                 if (captured) {
+                  const safeText = captured.text().replace(/\$/g, "$$$$");
                   finalReplacement = finalReplacement.replaceAll(
                     metaVar,
-                    captured.text()
+                    safeText
                   );
                 }
               }
@@ -66996,6 +67084,7 @@ function isPlainObject3(value) {
 function deepMerge3(base, incoming) {
   const result = { ...base };
   for (const key of Object.keys(incoming)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     const baseVal = base[key];
     const incomingVal = incoming[key];
     if (incomingVal === null || incomingVal === void 0) {
@@ -68129,6 +68218,66 @@ No events recorded.`
 };
 var traceTools = [traceTimelineTool, traceSummaryTool, sessionSearchTool];
 
+// src/tools/aosp-tools.ts
+var AOSP_MCP_URL = process.env.AOSP_MCP_URL || "http://10.23.12.96:8888/mcp";
+var AOSP_MCP_KEY = process.env.AOSP_MCP_KEY || "sk-abc123";
+async function callAospMcp(method, params) {
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method,
+    params
+  });
+  const res = await fetch(AOSP_MCP_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${AOSP_MCP_KEY}`
+    },
+    body
+  });
+  if (!res.ok) {
+    throw new Error(`AOSP MCP request failed: ${res.status} ${res.statusText}`);
+  }
+  const json = await res.json();
+  if (json.error) {
+    throw new Error(`AOSP MCP error: ${json.error.message}`);
+  }
+  return json.result ?? { content: [{ type: "text", text: JSON.stringify(json) }] };
+}
+var aospCodeSearchTool = {
+  name: "aosp_code_search",
+  description: 'Search AOSP (Android Open Source Project) codebase via remote MCP server. Use the "tool" param to specify which remote tool to call (e.g. "search", "lookup"), and "arguments" for tool-specific parameters.',
+  annotations: { readOnlyHint: true, openWorldHint: true },
+  schema: {
+    tool: external_exports.string().describe('Remote AOSP MCP tool name to invoke (e.g. "search", "lookup", "list_tools")'),
+    arguments: external_exports.record(external_exports.string(), external_exports.string()).optional().describe("Arguments to pass to the remote tool as key-value pairs")
+  },
+  handler: async (args) => {
+    try {
+      if (args.tool === "list_tools") {
+        const result2 = await callAospMcp("tools/list", {});
+        return {
+          content: [{ type: "text", text: JSON.stringify(result2, null, 2) }]
+        };
+      }
+      const result = await callAospMcp("tools/call", {
+        name: args.tool,
+        arguments: args.arguments ?? {}
+      });
+      return {
+        content: result.content ? result.content.map((c) => ({ type: "text", text: c.text })) : [{ type: "text", text: JSON.stringify(result, null, 2) }]
+      };
+    } catch (error2) {
+      return {
+        content: [{ type: "text", text: `AOSP MCP error: ${error2 instanceof Error ? error2.message : String(error2)}` }],
+        isError: true
+      };
+    }
+  }
+};
+var aospTools = [aospCodeSearchTool];
+
 // src/tools/shared-memory-tools.ts
 init_worktree_paths();
 
@@ -68582,6 +68731,7 @@ var sharedMemoryTools = [
 var import_path38 = require("path");
 var import_fs27 = require("fs");
 init_atomic_write();
+init_file_lock();
 var InteropConfigSchema = external_exports.object({
   sessionId: external_exports.string(),
   createdAt: external_exports.string(),
@@ -69434,7 +69584,8 @@ var TOOL_CATEGORIES = {
   CODEX: "codex",
   GEMINI: "gemini",
   SHARED_MEMORY: "shared-memory",
-  DEEPINIT: "deepinit"
+  DEEPINIT: "deepinit",
+  AOSP: "aosp"
 };
 
 // src/tools/deepinit-manifest.ts
@@ -69772,6 +69923,7 @@ var allTools = [
   ...tagCategory(notepadTools, TOOL_CATEGORIES.NOTEPAD),
   ...tagCategory(memoryTools, TOOL_CATEGORIES.MEMORY),
   ...tagCategory(traceTools, TOOL_CATEGORIES.TRACE),
+  ...tagCategory(aospTools, TOOL_CATEGORIES.AOSP),
   ...tagCategory(sharedMemoryTools, TOOL_CATEGORIES.SHARED_MEMORY),
   { ...deepinitManifestTool, category: TOOL_CATEGORIES.DEEPINIT },
   ...interopTools
@@ -77925,9 +78077,12 @@ var GiteaProvider = class {
   }
   viewIssueviaRest(number3, owner, repo) {
     const baseUrl = validateGiteaUrl(process.env.GITEA_URL ?? "");
+    const token = process.env.GITEA_TOKEN;
     if (!baseUrl || !owner || !repo) return null;
     try {
-      const args = ["-sS", `${baseUrl}/api/v1/repos/${owner}/${repo}/issues/${number3}`];
+      const args = ["-sS"];
+      if (token) args.push("-H", `Authorization: token ${token}`);
+      args.push(`${baseUrl}/api/v1/repos/${owner}/${repo}/issues/${number3}`);
       const raw = (0, import_node_child_process5.execFileSync)("curl", args, {
         encoding: "utf-8",
         timeout: 1e4,

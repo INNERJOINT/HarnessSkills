@@ -14,6 +14,7 @@ import { stateTools } from "../tools/state-tools.js";
 import { notepadTools } from "../tools/notepad-tools.js";
 import { memoryTools } from "../tools/memory-tools.js";
 import { traceTools } from "../tools/trace-tools.js";
+import { aospTools } from "../tools/aosp-tools.js";
 import { sharedMemoryTools } from "../tools/shared-memory-tools.js";
 import { getInteropTools } from "../interop/mcp-bridge.js";
 import { deepinitManifestTool } from "../tools/deepinit-manifest.js";
@@ -100,6 +101,7 @@ const allTools: ToolDef[] = [
   ...tagCategory(notepadTools as unknown as ToolDef[], TOOL_CATEGORIES.NOTEPAD),
   ...tagCategory(memoryTools as unknown as ToolDef[], TOOL_CATEGORIES.MEMORY),
   ...tagCategory(traceTools as unknown as ToolDef[], TOOL_CATEGORIES.TRACE),
+  ...tagCategory(aospTools as unknown as ToolDef[], TOOL_CATEGORIES.AOSP),
   ...tagCategory(sharedMemoryTools as unknown as ToolDef[], TOOL_CATEGORIES.SHARED_MEMORY),
   { ...(deepinitManifestTool as unknown as ToolDef), category: TOOL_CATEGORIES.DEEPINIT },
   ...interopTools,
